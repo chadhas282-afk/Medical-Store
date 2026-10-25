@@ -1,0 +1,23 @@
+# Render Blueprint — PharmaTrack (single web service: builds frontend, serves dist from backend)
+# Paste "From Render Blueprint" / New → Blueprint and point it at this repo.
+# After creation, set (Dashboard → Environment):
+#   MONGODB_URI  : Atlas | Aiven | MongoDB Atlas free — Render does NOT host MongoDB.
+#   JWT_SECRET   : long random string (e.g. `openssl rand -hex 48`).
+# Then Deploy.
+services:
+  - type: web
+    name: pharmatrack
+    runtime: node
+    plan: free
+    buildCommand: |
+      cd frontend && npm ci && npm run build && cd ../backend && npm ci
+    startCommand: node backend/server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false

@@ -1,0 +1,37 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    container_name: pharmatrack-mongo
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand({ ping: 1 })']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    container_name: pharmatrack-app
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - '5001:5001'
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+      MONGODB_URI: mongodb://mongo:27017/pharmacy-inventory
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env for production}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:
