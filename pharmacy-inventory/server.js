@@ -257,7 +257,7 @@ app.use(async (req, res, next) => {
     if (req.path.startsWith('/api')) {
       return res.status(503).json({
         error: 'Database connection failed. Please ensure MONGODB_URI is configured correctly.',
-        details: isProduction ? undefined : err.message
+        details: err.message
       });
     }
     next(err);
@@ -276,12 +276,29 @@ app.get('/api', (req, res) => {
   });
 });
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  let dbError = null;
+  if (mongoose.connection.readyState !== 1) {
+    try {
+      await connectDB();
+    } catch (err) {
+      dbError = err.message;
+    }
+  }
+
   const dbState = mongoose.connection.readyState;
   const dbStates = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const hasUri = !!process.env.MONGODB_URI;
+  const maskedUri = hasUri
+    ? process.env.MONGODB_URI.replace(/:\/\/[^:]+:[^@]+@/, '://***:***@')
+    : 'NOT_SET (fallback to localhost:27017)';
+
   res.status(dbState === 1 ? 200 : 503).json({
     status: dbState === 1 ? 'ok' : 'degraded',
     database: dbStates[dbState] || 'unknown',
+    uri_configured: hasUri,
+    uri_preview: maskedUri,
+    error: dbError,
     timestamp: new Date().toISOString()
   });
 });
