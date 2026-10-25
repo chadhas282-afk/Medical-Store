@@ -1697,6 +1697,214 @@ function Dashboard() {
 }
 
 // --- MEDICINES ---
+function ImportCSVModal({ open, onClose, onImportSuccess }) {
+  const [file, setFile] = useState(null);
+  const [parsing, setParsing] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef(null);
+  const { success, error } = useToast();
+
+  if (!open) return null;
+
+  const reset = () => {
+    setFile(null);
+    setPreview(null);
+    setParsing(false);
+    setImporting(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const processFile = (f) => {
+    if (!f.name.toLowerCase().endsWith('.csv')) {
+      error('Invalid File', 'Please select a valid CSV (.csv) file');
+      return;
+    }
+    setFile(f);
+    setParsing(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result;
+        const rows = parseCSV(text);
+        const result = csvRowsToMedicines(rows);
+        setPreview(result);
+      } catch (err) {
+        error('Parse Error', err.message);
+      } finally {
+        setParsing(false);
+      }
+    };
+    reader.onerror = () => {
+      error('Read Error', 'Failed to read file');
+      setParsing(false);
+    };
+    reader.readAsText(f);
+  };
+
+  const handleFileChange = (e) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) processFile(selectedFile);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) processFile(droppedFile);
+  };
+
+  const handleDownloadTemplate = () => {
+    const template = `"Name","Generic Name","Category","Batch Number","Manufacturer","Supplier","Quantity","Unit Price","Expiry Date","Mfg Date","Low Stock Threshold","Location","Notes"\n"Paracetamol 500mg","Paracetamol","Tablets","EXP-1001","Sun Pharma","HealthCorp","50","2.00","2026-12-31","2025-01-01","10","Shelf A1","Sample note"`;
+    const blob = new Blob([template], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'pharmatrack_inventory_template.csv';
+    a.click();
+  };
+
+  const handleImport = async () => {
+    if (!preview || !preview.medicines || preview.medicines.length === 0) return;
+    setImporting(true);
+    try {
+      const res = await api.medicines.importMany(preview.medicines);
+      const created = res.createdCount ?? res.created?.length ?? 0;
+      const skipped = res.skippedCount ?? res.skipped?.length ?? 0;
+      success('Import Complete', `Successfully imported ${created} medicines${skipped > 0 ? ` (${skipped} duplicates skipped)` : ''}`);
+      onImportSuccess && onImportSuccess();
+      handleClose();
+    } catch (err) {
+      error('Import Failed', err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={handleClose} role="dialog" aria-modal="true">
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
+        <div className="modal-header">
+          <h2 className="modal-title flex items-center gap-2">
+            <FileSpreadsheet className="w-5 h-5 text-teal-600" /> Import Medicines via CSV
+          </h2>
+          <button onClick={handleClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="modal-body space-y-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-500">Need the CSV columns format?</span>
+            <button type="button" onClick={handleDownloadTemplate} className="text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1">
+              <Download className="w-4 h-4" /> Download Sample CSV
+            </button>
+          </div>
+
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className="border-2 border-dashed border-gray-300 hover:border-teal-500 rounded-xl p-6 text-center cursor-pointer transition bg-gray-50/50 hover:bg-teal-50/20"
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            <Upload className="w-8 h-8 mx-auto text-gray-400 mb-2" />
+            <p className="font-medium text-gray-700">{file ? file.name : 'Click to select or drag and drop CSV file'}</p>
+            <p className="text-xs text-gray-400 mt-1">Accepts standard .csv file format</p>
+          </div>
+
+          {parsing && (
+            <div className="flex items-center justify-center gap-2 py-4 text-sm text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin text-teal-600" /> Validating CSV rows...
+            </div>
+          )}
+
+          {preview?.error && (
+            <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200">
+              {preview.error}
+            </div>
+          )}
+
+          {preview && !preview.error && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="p-2 bg-gray-100 rounded-lg">
+                  <div className="text-gray-500">Total Rows</div>
+                  <div className="text-base font-bold text-gray-800">{preview.total}</div>
+                </div>
+                <div className="p-2 bg-emerald-50 rounded-lg text-emerald-700">
+                  <div>Valid Ready</div>
+                  <div className="text-base font-bold">{preview.medicines?.length || 0}</div>
+                </div>
+                <div className="p-2 bg-amber-50 rounded-lg text-amber-700">
+                  <div>Invalid Rows</div>
+                  <div className="text-base font-bold">{preview.invalid || 0}</div>
+                </div>
+              </div>
+
+              {preview.medicines?.length > 0 && (
+                <div className="border rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-gray-100 text-gray-600 sticky top-0">
+                      <tr>
+                        <th className="p-2">Name</th>
+                        <th className="p-2">Category</th>
+                        <th className="p-2">Batch</th>
+                        <th className="p-2 text-right">Qty</th>
+                        <th className="p-2 text-right">Price</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {preview.medicines.slice(0, 5).map((m, idx) => (
+                        <tr key={idx} className="hover:bg-gray-50">
+                          <td className="p-2 font-medium truncate max-w-[120px]">{m.name}</td>
+                          <td className="p-2 truncate">{m.category}</td>
+                          <td className="p-2 font-mono text-[11px]">{m.batchNumber}</td>
+                          <td className="p-2 text-right">{m.quantity}</td>
+                          <td className="p-2 text-right">₹{m.unitPrice}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {preview.medicines.length > 5 && (
+                    <div className="p-2 text-center text-xs text-gray-400 bg-gray-50">
+                      + {preview.medicines.length - 5} more medicines...
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button type="button" onClick={handleClose} className="btn btn-secondary" disabled={importing}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleImport}
+            className="btn btn-primary"
+            disabled={importing || !preview?.medicines?.length}
+          >
+            {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {importing ? 'Importing…' : `Import ${preview?.medicines?.length ? `(${preview.medicines.length})` : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Medicines() {
   const navigate = useNavigate();
   const [medicines, setMedicines] = useState([]);
@@ -1707,6 +1915,7 @@ function Medicines() {
   const [deleteDialog, setDeleteDialog] = useState({ open: false, medicine: null });
   const [labelMedicine, setLabelMedicine] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const { success, error } = useToast();
 
   const loadMedicines = useCallback(async () => {
@@ -1740,6 +1949,50 @@ function Medicines() {
     }
   };
 
+  const handleExportCSV = () => {
+    if (!medicines || medicines.length === 0) {
+      error('No data', 'There are no medicines to export');
+      return;
+    }
+    const headers = [
+      'Name',
+      'Generic Name',
+      'Category',
+      'Batch Number',
+      'Manufacturer',
+      'Supplier',
+      'Quantity',
+      'Unit Price',
+      'Expiry Date',
+      'Mfg Date',
+      'Low Stock Threshold',
+      'Location',
+      'Notes'
+    ];
+    const rows = medicines.map((m) => [
+      `"${(m.name || '').replace(/"/g, '""')}"`,
+      `"${(m.genericName || '').replace(/"/g, '""')}"`,
+      `"${(m.category || '').replace(/"/g, '""')}"`,
+      `"${(m.batchNumber || '').replace(/"/g, '""')}"`,
+      `"${(m.manufacturer || '').replace(/"/g, '""')}"`,
+      `"${(m.supplier || '').replace(/"/g, '""')}"`,
+      m.quantity ?? 0,
+      m.unitPrice ?? 0,
+      m.expiryDate ? new Date(m.expiryDate).toISOString().split('T')[0] : '',
+      m.manufacturingDate ? new Date(m.manufacturingDate).toISOString().split('T')[0] : '',
+      m.lowStockThreshold ?? 10,
+      `"${(m.location || '').replace(/"/g, '""')}"`,
+      `"${(m.notes || '').replace(/"/g, '""')}"`
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `inventory_export_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    success('Exported', 'Medicines inventory exported to CSV');
+  };
+
   return (
     <div className="space-y-6">
       <div className="page-header">
@@ -1747,8 +2000,16 @@ function Medicines() {
           <h1 className="page-title">Medicines Inventory</h1>
           <p className="page-subtitle">Track batches, quantities, and expiration dates</p>
         </div>
-        <div className="page-actions">
-          <Link to="/medicines/new" className="btn btn-primary"><Plus className="w-4 h-4" /> Add Medicine</Link>
+        <div className="page-actions flex items-center gap-2 flex-wrap">
+          <button onClick={() => setImportOpen(true)} className="btn btn-secondary">
+            <Upload className="w-4 h-4" /> Import CSV
+          </button>
+          <button onClick={handleExportCSV} className="btn btn-secondary">
+            <Download className="w-4 h-4" /> Export CSV
+          </button>
+          <Link to="/medicines/new" className="btn btn-primary">
+            <Plus className="w-4 h-4" /> Add Medicine
+          </Link>
         </div>
       </div>
 
@@ -1774,6 +2035,12 @@ function Medicines() {
       />
 
       {labelMedicine && <LabelModal medicine={labelMedicine} onClose={() => setLabelMedicine(null)} />}
+
+      <ImportCSVModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImportSuccess={loadMedicines}
+      />
     </div>
   );
 }
